@@ -1,0 +1,193 @@
+<div>
+    <h1>Proof of Concept - Web3 assets receiver</h1>
+    <h2>Let order will have id #<span id="order_id"></span></h2>
+    <p>Receiving assets to hot/cold-wallet(asset pool) without creating new addresses for each order using Web3</p>
+    <p>We will lookup for foreign address, i.e. <a href="https://ropsten.etherscan.io/address/0x687422eea2cb73b5d3e242ba5456b782919afc85">0x687422eEA2cB73B5d3e242bA5456b782919AFc85</a> on ropsten network.</p>
+    <p>FYI we don't own it, just want to prove that algoritm works.</p>
+    <p>Abstract:</p>
+    <ul>
+        <li>You sign message with order number via web3</li>
+        <li>We store your sign</li>
+        <li>Now we know which address is yours(we match your address with order id)</li>
+        <li>You pay any amount of ETH to address</li>
+        <li>We lookup for your transfer from your address across tons of other</li>
+        <li>You get much cheaper transfer(without accumulation and extra deposit fees). Owner of 0x687422eEA2cB73B5d3e242bA5456b782919AFc85 can use assets immediately.</li>
+    </ul>
+    <p>PS: This algo works great with token transfers too.</p>
+    <h2>Logs:</h2>
+    <pre id="logger" style="width:calc(100% - 50px); background: #eee; border-radius: 2px; padding: 5px; margin:20px; white-space: pre-wrap; "></pre>
+</div>
+<script src="https://cdn.ethers.io/lib/ethers-5.1.umd.min.js" type="text/javascript"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function(){
+    var order_id = 4130833130;
+    document.getElementById("order_id").innerHTML = order_id;
+
+    var logger = document.getElementById('logger');
+    log_me = function (message) {
+        if (typeof message == 'object') {
+            logger.innerHTML += (JSON && JSON.stringify ? JSON.stringify(message) : message) + '<br />';
+        } else {
+            logger.innerHTML += message + '<br />';
+        }
+    }
+
+    if (window.ethereum) {
+        log_me('here we go');
+        var account;
+
+        window.ethereum.request({
+            method: 'wallet_switchEthereumChain',
+            params: [
+                {
+                    chainId: '0x3',
+                },
+            ],
+        }).then((result) => {
+            const provider = new ethers.providers.Web3Provider(window.ethereum, "any");
+            
+            provider.send("eth_requestAccounts", []).then((accounts) => {
+                account = accounts[0];
+                log_me('connected: ' + account);
+                const signer = provider.getSigner();
+                signer.signMessage(ethers.utils.arrayify(order_id)).then((signature) => {
+                    log_me('your sign: ' + signature)
+                    log_me('we recover address from signature: ' + ethers.utils.verifyMessage( ethers.utils.arrayify(order_id) , signature ))
+                    log_me('now send any amount to address 0x687422eEA2cB73B5d3e242bA5456b782919AFc85 in ropsten')
+                    var block_last = false;
+                    var do_requests = true;
+                    setInterval(() => {
+                        if (!do_requests) return;
+                        // this may work with holes according to that we don't list blocks we already seen
+                        // better is subscribe ofc
+                        fetch('https://ropsten.infura.io/v3/63cf6a7932394e5db4815c21cacc10e4', {
+                            method: 'post',
+                            headers: {
+                                'Accept': 'application/json, text/plain, */*',
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({"jsonrpc":"2.0","method":"eth_getBlockByNumber","params": ["latest", true],"id":1})
+                        })
+                        .then(res => res.json())
+                        .then(res => {
+                            res['result']['transactions'].forEach(tx => {
+                                if(!tx['to']) return ;
+                                if(tx['from'] == account) {
+                                    log_me('found! txid: ' + tx['hash']);
+                                    log_me('it\'s payment for your order accross tons of other transactions');
+                                    log_me(ethers.utils.formatUnits(ethers.BigNumber.from(tx['value']).toString(), 18) + ' amount received. Stop parsing new blocks. Refresh page if you want to check algo one more time')
+                                    do_requests = false;
+                                }
+                            });
+                            if (block_last != res['result']['number']) {
+                                log_me('new block '+ res['result']['number']);
+                                console.log(res['result']);
+                                block_last = res['result']['number'];
+                            }
+                            
+                        });
+                        
+                    }, 10000)
+                })
+            });
+            
+        });
+        /*
+        
+        window.ethereum.request({
+            method: 'wallet_switchEthereumChain',
+            params: [
+                {
+                    chainId: '0x3',
+                },
+            ],
+        }).then((result) => {
+            window.ethereum.request({ method: 'eth_requestAccounts' }).then((result) => {
+                account = window.ethereum.selectedAddress;
+                log_me('connected: ' + account);
+                const msgParams = JSON.stringify({
+                    domain: {
+                        chainId: 3,
+                        name: 'SignOrder',
+                        verifyingContract: "0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC",
+                        version: '1',
+                    },
+
+                    message: {
+                        order_id: order_id,
+                    },
+                    primaryType: "Order",
+                    types: {
+                        EIP712Domain: [
+                            {
+                                name: "name",
+                                type: "string"
+                            },
+                            {
+                                name: "version",
+                                type: "string"
+                            },
+                            {
+                                name: "chainId",
+                                type: "uint256"
+                            },
+                            {
+                                name: "verifyingContract",
+                                type: "address"
+                            }
+                        ],
+                        Order: [
+                            {
+                                name: "order_id",
+                                type: "string"
+                            },
+                        ]
+                    }
+                });
+                window.ethereum.request({
+                    method: 'eth_signTypedData_v4',
+                    params: [account, msgParams]
+                }).then((signature) => {
+                    log_me('sign is: ' + signature);
+                    const r = "0x" + signature.substring(2, 66);
+                    const s = "0x" + signature.substring(66, 130);
+                    const v = parseInt(signature.substring(130, 132), 16);
+                    log_me(ethers.utils.verifyMessage( msgParams , signature ))
+                })
+            }).catch((error) => {
+                log_me(error)
+            });
+        });
+        */
+        // window.ethereum.request({
+        //     method: 'personal_sign',
+        //     params: ['123', account, password]
+        // })
+        
+        // var account = window.ethereum.selectedAddress
+        // var msg = window.web3.utils.sha3(web3.utils.toHex("test1") + "0xd9145CCE52D386f254917e481eB44e9943F39138", {encoding:"hex"})
+        // var signature = await window.web3.eth.personal.sign(msg, account);
+        // var r = signature.substr(0,66)
+        // var s = "0x" + signature.substr(66,64)
+        // var v = 28
+
+        // block_number
+        
+
+        // fetch('https://ropsten.infura.io/v3/63cf6a7932394e5db4815c21cacc10e4', {
+        //     method: 'post',
+        //     headers: {
+        //         'Accept': 'application/json, text/plain, */*',
+        //         'Content-Type': 'application/json'
+        //     },
+        //     body: JSON.stringify({"jsonrpc":"2.0","method":"eth_getBlockByNumber","params": ["latest"],"id":1})
+        // })
+        // .then(res => res.json())
+        // .then(res => {
+        //     res
+        // });
+    } else {
+        log_me('no web3 found, use web3 like metamask to continue with lower fees.')
+    }
+});
+</script>
